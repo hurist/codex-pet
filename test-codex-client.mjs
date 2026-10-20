@@ -2,6 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+function chatDirectory(t) {
+  const cwd = mkdtempSync(join(tmpdir(), 'codex-pet-test-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  return cwd;
+}
 import { CodexClient, quotaSummary } from './codex-client.mjs';
 import { protectBrowserOrigins, legacyWorkStatus } from './codex-adapter.mjs';
 
@@ -61,22 +70,24 @@ test('API key login cannot accidentally become a paid pet chat provider', async 
   assert.equal(child.killed, true);
 });
 
-test('chat handles fast completion, ignores other threads and requests no environment', async () => {
+test('chat handles fast completion, ignores other threads and requests no environment', async t => {
   const { child, sent } = fakeServer();
-  const client = new CodexClient('fake', '/chat', () => child);
+  const client = new CodexClient('fake', chatDirectory(t), () => child);
   try {
     assert.equal(await client.chat([{ role: 'user', content: '你好' }], '桌宠'), '你好');
     const start = sent.find(message => message.method === 'thread/start').params;
-    assert.equal(start.ephemeral, true);
+    assert.equal(start.ephemeral, false);
+    assert.deepEqual(sent.find(message => message.method === 'thread/name/set').params,
+      { threadId: 'pet-thread', name: '桌宠聊天' });
     assert.deepEqual(start.environments, []);
     assert.equal(start.sandbox, 'read-only');
     assert.equal(client.listenerCount('notification'), 0);
   } finally { client.close(); }
 });
 
-test('failed turn cannot be reported as a successful reply', async () => {
+test('failed turn cannot be reported as a successful reply', async t => {
   const { child } = fakeServer('failed');
-  const client = new CodexClient('fake', '/chat', () => child);
+  const client = new CodexClient('fake', chatDirectory(t), () => child);
   try {
     await assert.rejects(client.chat([{ role: 'user', content: '你好' }], '桌宠'), /未完成/);
     assert.equal(client.listenerCount('notification'), 0);
@@ -94,4 +105,40 @@ test('a remote browser cannot invoke chat; the private local bridge still works'
   assert.equal(calls, 0);
   routes[0].handler({ headers: {} }, {});
   assert.equal(calls, 1);
+});
+
+
+test('multiple messages and process restarts reuse one thread without replaying history', async t => {
+  const cwd = chatDirectory(t);
+  for (let session = 0; session < 2; session++) {
+    const { child, sent } = fakeServer();
+    const client = new CodexClient('fake', cwd, () => child);
+    try {
+      for (let turn = 0; turn < 2; turn++)
+        await client.chat([{ role: 'user', content: '旧消息' },
+          { role: 'assistant', content: '旧回复' },
+          { role: 'user', content: [{ type: 'text', text: '新消息' }] }], '桌宠');
+      assert.equal(sent.filter(m => m.method === 'thread/start').length, session === 0 ? 1 : 0);
+      assert.equal(sent.filter(m => m.method === 'thread/resume').length, session === 0 ? 1 : 2);
+      for (const m of sent.filter(m => m.method === 'turn/start'))
+        assert.deepEqual(m.params.input, [{ type: 'text', text: '新消息' }]);
+      assert.equal(sent.some(m => m.method === 'turn/interrupt'), false);
+    } finally { client.close(); }
+  }
+});
+
+test('corrupt state and missing persisted threads never silently create replacements', async t => {
+  const cwd = chatDirectory(t);
+  const { child, sent } = fakeServer();
+  const client = new CodexClient('fake', cwd, () => child);
+  try {
+    writeFileSync(join(cwd, 'thread.json'), '{broken');
+    await assert.rejects(client.chat([{ role: 'user', content: '你好' }], '桌宠'), /索引无法读取/);
+    writeFileSync(join(cwd, 'thread.json'), JSON.stringify({ threadId: 'saved-thread' }));
+    const request = client.request.bind(client);
+    client.request = (method, params) => method === 'thread/resume'
+      ? Promise.reject(new Error('thread not found')) : request(method, params);
+    await assert.rejects(client.chat([{ role: 'user', content: '你好' }], '桌宠'), /thread not found/);
+    assert.equal(sent.some(m => m.method === 'thread/start'), false);
+  } finally { client.close(); }
 });

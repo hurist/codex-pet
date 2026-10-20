@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { EventEmitter } from 'node:events';
+import { readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { join } from 'node:path';
 
 export class CodexClient extends EventEmitter {
   constructor(cli, cwd, launch = spawn) {
@@ -100,15 +102,14 @@ export class CodexClient extends EventEmitter {
   async chat(messages, system, signal) {
     await this.connect();
     if (signal?.aborted) throw new Error('聊天已取消。');
-    const started = await this.request('thread/start', {
-      cwd: this.cwd, ephemeral: true, environments: [],
-      approvalPolicy: 'never', sandbox: 'read-only',
-      baseInstructions: '你是桌宠的文字聊天伙伴。只用文字回复，不调用工具、不访问文件、不执行任务。',
-      developerInstructions: system + '\n回复简短自然，通常不超过150个汉字。',
-      modelProvider: 'openai', serviceName: 'codex_pet', selectedCapabilityRoots: [],
-    });
-    const threadId = started.thread.id;
+    const latest = messages.findLast(message => message.role === 'user');
+    const input = Array.isArray(latest?.content)
+      ? latest.content.filter(block => block.type === 'text').map(block => block.text).join('')
+      : String(latest?.content ?? '');
+    if (!input.trim()) throw new Error('聊天消息不能为空。');
+    const threadId = await this.chatThread(system);
     let turnId;
+    let completed = false;
     let abort;
     let listener;
     let disconnect;
@@ -122,6 +123,7 @@ export class CodexClient extends EventEmitter {
         if (method === 'item/completed' && params.item?.type === 'agentMessage')
           completedText = params.item.text ?? completedText;
         if (method === 'turn/completed') {
+          completed = true;
           if (params.turn?.status !== 'completed')
             reject(new Error(params.turn?.error?.message || 'Codex 聊天未完成。'));
           else resolve((completedText || text).trim());
@@ -138,11 +140,8 @@ export class CodexClient extends EventEmitter {
     done.catch(() => {});
     try {
       if (signal?.aborted) throw new Error('聊天已取消。');
-      const input = '以下 JSON 是此前对话和本次消息，按 role 区分说话者，回答最后一条 user 消息：\n' +
-        JSON.stringify(messages.map(message => ({ role: message.role,
-          content: Array.isArray(message.content)
-            ? message.content.filter(block => block.type === 'text').map(block => block.text).join('')
-            : String(message.content ?? '') })));
+      // Codex owns the full history; replaying dsh-pet's rolling memory would
+      // duplicate old messages and hide the real user text in a JSON transcript.
       const turn = await this.request('turn/start', {
         threadId, environments: [], effort: 'low',
         input: [{ type: 'text', text: input }],
@@ -156,10 +155,47 @@ export class CodexClient extends EventEmitter {
       signal?.removeEventListener('abort', abort);
       this.off('notification', listener);
       this.off('disconnected', disconnect);
-      // No persistent thread is created; dsh-pet owns its own local chat history.
-      if (turnId) await this.request('turn/interrupt', { threadId, turnId }, 1500).catch(() => {});
+      if (turnId && !completed)
+        await this.request('turn/interrupt', { threadId, turnId }, 1500).catch(() => {});
       await this.request('thread/unsubscribe', { threadId }, 1500).catch(() => {});
     }
+  }
+
+  async chatThread(system) {
+    const statePath = join(this.cwd, 'thread.json');
+    let state;
+    try {
+      state = JSON.parse(readFileSync(statePath, 'utf8'));
+      if (typeof state.threadId !== 'string' || !state.threadId)
+        throw new Error('聊天 ID 无效');
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw new Error('桌宠聊天记录索引无法读取：' + error.message);
+    }
+    const settings = {
+      cwd: this.cwd,
+      approvalPolicy: 'never', sandbox: 'read-only',
+      baseInstructions: '你是桌宠的文字聊天伙伴。只用文字回复，不调用工具、不访问文件、不执行任务。',
+      developerInstructions: system + '\n回复简短自然，通常不超过150个汉字。',
+      modelProvider: 'openai',
+    };
+    let threadId = state?.threadId;
+    if (threadId) {
+      // Resume on every request so messages sent from Codex are also visible.
+      // A resume failure must not silently create another conversation.
+      await this.request('thread/resume', { ...settings, threadId, excludeTurns: true });
+    } else {
+      const started = await this.request('thread/start', {
+        ...settings, ephemeral: false, environments: [],
+        serviceName: 'codex_pet', selectedCapabilityRoots: [],
+      });
+      threadId = started.thread.id;
+      // Persist before naming/turn start: retries must reuse this same thread.
+      const temporary = statePath + '.tmp';
+      writeFileSync(temporary, JSON.stringify({ threadId, name: '桌宠聊天' }) + '\n', { mode: 0o600 });
+      renameSync(temporary, statePath);
+    }
+    await this.request('thread/name/set', { threadId, name: '桌宠聊天' });
+    return threadId;
   }
 
   close() {
