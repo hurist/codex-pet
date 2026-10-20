@@ -1,0 +1,158 @@
+# Codex Pet 🐋
+
+让原版 [dsh-pet](https://github.com/PC2005-cloud/dsh-pet) 独立桌宠跟随 Codex 的工作状态切换动画。
+
+这个仓库提供本地桥接和部署脚本，**不修改 Codex 或 dsh-pet 源码**。桌宠通过 npm 安装，保留原版透明动画、随机动作、拖拽和甩抛。
+
+## 效果
+
+| Codex 事件 | 桌宠反应 |
+| --- | --- |
+| 发送消息 | 思考冒泡 |
+| 调用工具 | 忙碌点按 |
+| 等待审批 | 踱步张望，提示需要确认 |
+| 整理上下文 | 清点归档 |
+| 一轮回复结束 | 挥手，提示回复结束 |
+| 中断、结束会话 | 回到待机 |
+
+支持多聊天状态合并、同状态短时间去重；一轮回复结束不代表任务成功。动作是事件触发的单次播放，播放后由原桌宠继续自己的动画链。
+
+## 电脑要求
+
+- Codex 桌面版，支持 Hooks，并登录自己的账号。
+- [Node.js](https://nodejs.org/) **>=22.12.0**，包含 npm。
+- [Python](https://www.python.org/downloads/) **>=3.9**，以及 Git。
+- 首次部署需要网络：npm 下载 dsh-pet，首次启动还可能下载 Electron。
+
+本次实际验证平台为 **macOS Apple Silicon**；提供 Windows/Linux 兼容代码，但这两个系统的桌宠窗口和 Codex 联动尚未实机验收。Linux 需要图形桌面。无需提供 DeepSeek API Key。
+
+## 在家里电脑部署
+
+### 1. 克隆并安装
+
+终端执行，每条命令单独运行：
+
+```bash
+git clone https://github.com/hurist/codex-pet.git
+cd codex-pet
+node --version
+python3 --version
+python3 manage.py install
+```
+
+Windows 如果没有 `python3` 命令，可把以下所有 `python3` 替换成 `py -3`。
+
+安装器使用固定版本 `dsh-pet@0.3.7` 和 package-lock，在本仓库安装依赖，不需要全局安装 npm 包。它会合并当前电脑 `~/.codex/hooks.json` 中的 9 个 **Codex Pet** Hooks，保留其他 Hooks 和 `config.toml` 中原来的通知配置。原 Hooks 文件备份在 `.local/backups/`。
+
+### 2. 启动原版桌宠
+
+```bash
+python3 manage.py start
+```
+
+宠物默认出现在右上角。第一次可能需要等待 Electron 下载；查看进度：
+
+```bash
+tail -f .local/pet.log
+```
+
+Windows PowerShell 对应命令：`Get-Content .local/pet.log -Wait`。
+
+也可以前台运行以直接观察日志，按 Ctrl+C 退出：
+
+```bash
+python3 manage.py start --foreground
+```
+
+如果自己已经装了 Electron，可在运行 start 前设置 `DSH_PET_ELECTRON_PATH` 为它的可执行文件路径。默认由上游自动下载，不复制其他电脑的 Electron.app。
+
+### 3. 在 Codex 中信任 Hooks
+
+打开 **设置 → Hooks → Reload hooks**，找到本机用户配置中的 **Codex Pet**，审阅命令后信任这 9 项。
+
+如果当前版本没有该设置入口，可在 Codex CLI 中输入 `/hooks` 进行审阅。若旧聊天未刷新配置，关闭并重新打开 Codex 后新建聊天再试。
+
+这些 Hooks 只向 `127.0.0.1` 上的桌宠发送固定动作名称和固定状态文字，不返回任何审批决定，也不把内容写入模型上下文。请保留 Codex 的正常 Hooks 信任检查。
+
+### 4. 验证
+
+```bash
+python3 manage.py check
+python3 manage.py demo
+```
+
+`check` 检查配置和 Electron；首次还没下载 Electron 时可能提示缺少运行时，先 start 下载后重试。`demo` 发送模拟状态，观察桌宠动作变化。
+
+最后在 Codex 中发一句消息，并让它执行一个简单的本地工具调用，观察思考、忙碌和结束动作。模拟事件通过只证明桥接到桌宠的链路；**真实聊天联动需要这一步另行确认**。有审批操作时再观察等待提示。
+
+## 日常使用
+
+```bash
+python3 manage.py start       # 启动；已运行则不重复开
+python3 manage.py stop        # 仅关闭本仓库启动的桌宠
+python3 manage.py check       # 检查配置及服务
+python3 manage.py demo        # 演示模拟事件
+```
+
+不设置开机启动；重启电脑后手动运行 start。关闭桌宠后，Hooks 的短超时失败不会替你批准或拒绝操作。
+
+## 路径、端口和大小
+
+- 用户路径由安装器在当前电脑生成，仓库没有写死某个人的用户名或 Node 安装路径。
+- 安装器使用当前 Python 的绝对路径；移动仓库、更换 Python 环境后请重新执行 install，并重新信任变化的 Hooks。
+- Codex 使用自定义配置目录时：`python3 manage.py install --codex-home /path/to/codex-home`。默认也识别 `CODEX_HOME` 环境变量。
+- 默认端口 **31870**。若被其他程序占用，先 stop，然后执行 `python3 manage.py install --port 31871`，再 start。不会自动连接或关闭其他目录的实例。
+- 大小和位置保存在 `.local/dsh-home/dsh-pet/main-config.jsonc`，默认 `size: 360`、右上角。修改后 stop/start。
+- `.local/config.json` 保存本机端口等部署参数；`.local/events.jsonl` 保存事件名、派生状态和投递结果，不保存用户消息、工具参数或回复内容。
+
+请勿同时启用其他旧版桥接 Hooks，否则同一次事件可能触发两次动作。之前按聊天临时路径部署过的电脑，请在 Hooks 设置中先停用旧 `bridge.py` 命令对应的 Hooks，再安装此仓库。其他全新的电脑不需要这一步。
+
+## 更新与卸载
+
+更新前停止桌宠：
+
+```bash
+python3 manage.py stop
+git pull --ff-only
+python3 manage.py install
+python3 manage.py start
+```
+
+重新检查 Hooks 信任状态。安装器只替换带 **Codex Pet** 标记的 Hooks；其他用户配置保留。不要在多个目录同时安装这个桥接，用户 Hooks 中只保留一套。
+
+卸载联动：
+
+```bash
+python3 manage.py uninstall
+```
+
+该命令关闭本项目实例、删除带 Codex Pet 标记的 Hooks，保留其他 Hooks 与 `.local` 本地数据。之后可以自行删除仓库目录。
+
+## 故障排查
+
+| 现象 | 检查方法 |
+| --- | --- |
+| 找不到 npm/node/python | 安装要求版本并重新打开终端；Windows 尝试 `py -3` |
+| start 后没有宠物 | 查看 `.local/pet.log`，首次 Electron 下载可能尚未完成 |
+| Electron 下载失败 | 按上游说明配置 `DSH_PET_ELECTRON_MIRROR`，或指定已有 `DSH_PET_ELECTRON_PATH`，然后重启 |
+| demo 成功、Codex 无反应 | 检查是否已信任 Hooks、Hooks 功能是否被管理员关闭，重新打开 Codex、新建聊天 |
+| 日志中 delivered=false | 确认桌宠启动、端口一致，并检查 pet.log；未启动时失败属预期 |
+| 端口冲突 | 按上文更换端口；不要关闭不属于本项目的服务 |
+| 动作一闪而过 | 事件点播完成后恢复原动画链，这是当前桥接方式的行为 |
+
+## 开发与验证
+
+桥接仅依赖 Python 标准库：
+
+```bash
+python3 -m unittest discover -p 'test_*.py' -v
+```
+
+测试覆盖多会话结束、迟到事件、工具突发去重、离线重试、Hooks 合并与卸载保留其他配置。跨平台单元测试不等同于桌面动画与真实 Hooks 的实机验收。
+
+## 来源与边界
+
+- 桌宠原项目：[PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet)，按其 MIT 许可及上游说明使用。动画通过 npm 原包安装，本仓库不重新分发人物素材。
+- Codex Hooks：[官方说明](https://learn.chatgpt.com/docs/hooks)。
+- 本仓库桥接代码使用 MIT 许可。不是 OpenAI 或 DeepSeek 官方项目。
+- 当前只做 Codex → 桌宠的状态联动，不支持从桌宠向 Codex 发消息；独立模式的 AI 聊天、余额与 DSH 会话能力未接入。
