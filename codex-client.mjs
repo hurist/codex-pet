@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { EventEmitter } from 'node:events';
 import { readFileSync, writeFileSync, renameSync } from 'node:fs';
@@ -207,7 +207,13 @@ export class CodexClient extends EventEmitter {
     if (child) {
       this.disconnected(child, new Error('Codex 连接已关闭。'));
       child.stdin.end();
-      child.kill();
+      if (process.platform === 'win32' && Number.isInteger(child.pid) && child.exitCode === null) {
+        // npm's JS entry owns a native Codex child. Windows kill() terminates
+        // only that JS parent, so stop this owned tree before the host exits.
+        const result = spawnSync(join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe'),
+          ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', timeout: 3000 });
+        if (result.status !== 0) child.kill();
+      } else child.kill();
     }
     this.ready = null;
   }

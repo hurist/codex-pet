@@ -86,6 +86,31 @@ test('npm Codex JS entry runs through Node with direct hidden stdio', async () =
   } finally { client.close(); }
 });
 
+test('Windows close stops the npm wrapper and its owned native-process tree',
+  { skip: process.platform !== 'win32' }, async t => {
+    const cwd = chatDirectory(t);
+    const wrapper = join(cwd, 'wrapper.js');
+    writeFileSync(wrapper, `const {spawn}=require('node:child_process');
+const {createInterface}=require('node:readline');
+const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore',windowsHide:true});
+console.log(JSON.stringify({method:'test/child',params:{pid:child.pid}}));
+createInterface({input:process.stdin}).on('line',line=>{
+ const m=JSON.parse(line); if(m.id===undefined)return;
+ const result=m.method==='account/read'?{account:{type:'chatgpt'}}:{};
+ console.log(JSON.stringify({id:m.id,result}));
+});
+setInterval(()=>{},1000);`);
+    const client = new CodexClient(wrapper, cwd);
+    let pid;
+    client.on('notification', m => { if (m.method === 'test/child') pid = m.params.pid; });
+    try {
+      await client.connect();
+      assert.ok(Number.isInteger(pid));
+      client.close();
+      assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+    } finally { client.close(); }
+  });
+
 test('chat handles fast completion, ignores other threads and requests no environment', async t => {
   const { child, sent } = fakeServer();
   const client = new CodexClient('fake', chatDirectory(t), () => child);
