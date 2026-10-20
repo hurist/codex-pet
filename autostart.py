@@ -34,14 +34,19 @@ def locations():
             Path.home() / 'Library/Application Support/CodexPet')
 
 
-def definition(node, support, port, electron=None):
+def definition(node, support, port, electron=None, codex_cli=None):
     env = {'DSH_HOME': str(support / 'dsh-home'),
            'PATH': str(Path(node).parent) + ':/usr/bin:/bin:/usr/sbin:/sbin'}
     if electron:
         env['DSH_PET_ELECTRON_PATH'] = str(electron)
+    if codex_cli:
+        env['CODEX_PET_CLI'] = str(codex_cli)
+        if os.environ.get('CODEX_HOME'):
+            env['CODEX_HOME'] = os.environ['CODEX_HOME']
+    entry = 'codex-standalone.js' if codex_cli else 'standalone.js'
     return {
         'Label': LABEL,
-        'ProgramArguments': [str(node), str(support / 'runtime/node_modules/dsh-pet/lib/standalone.js'), '--port', str(port)],
+        'ProgramArguments': [str(node), str(support / 'runtime/node_modules/dsh-pet/lib' / entry), '--port', str(port)],
         'WorkingDirectory': str(support), 'EnvironmentVariables': env,
         'RunAtLoad': True, 'KeepAlive': False, 'LimitLoadToSessionType': 'Aqua',
         'StandardOutPath': str(support / 'pet.log'),
@@ -81,7 +86,7 @@ def disable():
     print('已关闭登录自启；由此启动项运行的桌宠同时退出。本地素材保留。')
 
 
-def enable(node, runtime_dir, source_home, port):
+def enable(node, runtime_dir, source_home, port, codex_cli=None):
     plist, support = locations()
     domain = f'gui/{os.getuid()}'
     target = domain + '/' + LABEL
@@ -106,7 +111,12 @@ def enable(node, runtime_dir, source_home, port):
     replace_tree(runtime_dir / 'node_modules', support / 'runtime/node_modules')
     dest = support / 'dsh-home/dsh-pet/main-config.jsonc'
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source_config, dest)
+    if source_config.resolve() != dest.resolve():
+        shutil.copy2(source_config, dest)
+    if codex_cli:
+        import codex_support
+        codex_support.prepare(staged_package)
+        codex_support.configure_home(support / 'dsh-home')
     electron = None
     explicit = os.environ.get('DSH_PET_ELECTRON_PATH')
     shared = Path.home() / '.dsh/electron/Electron.app/Contents/MacOS/Electron'
@@ -151,7 +161,7 @@ def enable(node, runtime_dir, source_home, port):
     if ctl('print', target, check=False).returncode == 0:
         ctl('bootout', target)
     plist.parent.mkdir(parents=True, exist_ok=True)
-    plist.write_bytes(plistlib.dumps(definition(node, support, port, electron)))
+    plist.write_bytes(plistlib.dumps(definition(node, support, port, electron, codex_cli)))
     plist.chmod(0o644)
     ctl('enable', target)
     ctl('bootstrap', domain, str(plist))

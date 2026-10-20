@@ -2,7 +2,7 @@
 
 让原版 [dsh-pet](https://github.com/PC2005-cloud/dsh-pet) 独立桌宠跟随 Codex 的工作状态切换动画。
 
-这个仓库提供本地桥接和部署脚本，**不修改 Codex 或 dsh-pet 源码**。桌宠通过 npm 安装，保留原版透明动画、随机动作、拖拽和甩抛。
+这个仓库提供本地桥接和部署脚本，保留 Codex 与 dsh-pet 原始文件，在本地生成固定版本的 Codex 适配入口。桌宠通过 npm 安装，保留原版透明动画、随机动作、拖拽和甩抛。
 
 ## 效果
 
@@ -12,19 +12,43 @@
 | 调用工具 | 忙碌点按 |
 | 等待审批 | 踱步张望，提示需要确认 |
 | 整理上下文 | 清点归档 |
-| 一轮回复结束 | 挥手，提示回复结束 |
+| 一轮回复结束 | 挥手，结束当前工作状态（不代表任务成功） |
 | 中断、结束会话 | 回到待机 |
+| 右键 → Codex 额度 | 显示额度窗口的剩余百分比、重置时间和查询时间 |
+| 右键 → 对话 | 复用 Codex 登录账号独立聊天，回复以气泡显示 |
 
 支持多聊天状态合并、同状态短时间去重；一轮回复结束不代表任务成功。动作是事件触发的单次播放，播放后由原桌宠继续自己的动画链。
 
 ## 电脑要求
 
 - Codex 桌面版，支持 Hooks，并登录自己的账号。
+- 可运行 `codex app-server` 的 Codex CLI；macOS 会自动查找桌面应用内置的 CLI。
 - [Node.js](https://nodejs.org/) **>=22.12.0**，包含 npm。
 - [Python](https://www.python.org/downloads/) **>=3.9**，以及 Git。
 - 首次部署需要网络：npm 下载 dsh-pet，首次启动还可能下载 Electron。
 
 本次实际验证平台为 **macOS Apple Silicon**；提供 Windows/Linux 兼容代码，但这两个系统的桌宠窗口和 Codex 联动尚未实机验收。Linux 需要图形桌面。无需提供 DeepSeek API Key。
+
+## Codex 额度与独立聊天
+
+新安装默认启用。已有安装更新仓库后执行：
+
+```bash
+git pull --ff-only
+python3 manage.py codex-enable
+```
+
+如果已经启用了登录自启，这个命令会更新自启副本并重启桌宠，保留原有 Hooks。未启用自启则重启当前桌宠。然后右键宠物：
+
+- **Codex 额度**：读取登录账号使用限制。按实际提供的窗口显示，不假定一定有“5 小时”或“周”窗口；缺失时提示不可用，不显示伪造的 0%。周期刷新默认约半小时，右键可立即刷新，气泡带查询时间。
+- **对话**：输入文字并按回车，回复显示在气泡中；按 Esc 关闭输入框。使用 Codex 当前默认模型和较低推理强度，和账号内其他 Codex 使用共用额度，无需另外配置 API Key。
+- **碎碎念**：可手动触发，同样调用 Codex。自动碎碎念保持关闭，避免无人操作时持续消耗模型额度。
+
+聊天记忆单独保存在桌宠的 `dsh-pet/memory.json`，默认携带最近 5 轮上下文；不会接管已有工作聊天或读取其历史。调用时使用临时聊天上下文，不向模型开放本地执行环境；不自动批准权限请求。消息和人设会发送给 Codex 服务，额度不足、登录失效、超时会明确报错。
+
+本次实测包括原生额度口径核对、桌宠真实接口两轮暗号记忆及桌面菜单。Codex 自行管理登录与令牌刷新，本仓库不读取或复制登录令牌。家里的电脑需要先在自己的 Codex 中登录。找不到 CLI 时，可设置 `CODEX_PET_CLI` 为可执行文件绝对路径，再执行 install 或 codex-enable。
+
+桌面版更新导致 CLI 路径改变时，重新运行 `codex-enable`。使用自定义 `CODEX_HOME` 时，在该环境中运行启用命令；登录自启会保留这个配置目录设置。适配器只接受 ChatGPT 登录账号并使用 OpenAI 的 Codex 模型路径，不会退回 API Key 或其他自定义服务商。
 
 ## 在家里电脑部署
 
@@ -92,6 +116,7 @@ python3 manage.py start       # 启动；已运行则不重复开
 python3 manage.py stop        # 仅关闭本仓库启动的桌宠
 python3 manage.py check       # 检查配置及服务
 python3 manage.py demo        # 演示模拟事件
+python3 manage.py codex-enable # 为旧安装启用额度和聊天
 ```
 
 默认不自动设置开机启动。需要时可按下一节启用。关闭桌宠后，Hooks 的短超时失败不会替你批准或拒绝操作。
@@ -146,6 +171,7 @@ python3 manage.py autostart enable --runtime-dir /path/to/dsh-pet-runtime --dsh-
 python3 manage.py stop
 git pull --ff-only
 python3 manage.py install
+python3 manage.py codex-enable
 python3 manage.py start
 ```
 
@@ -170,6 +196,9 @@ python3 manage.py uninstall
 | 日志中 delivered=false | 确认桌宠启动、端口一致，并检查 pet.log；未启动时失败属预期 |
 | 端口冲突 | 按上文更换端口；不要关闭不属于本项目的服务 |
 | 动作一闪而过 | 事件点播完成后恢复原动画链，这是当前桥接方式的行为 |
+| 聊天或额度提示未登录 | 在同一电脑、同一 CODEX_HOME 下登录 Codex，再重试 |
+| 找不到 Codex CLI | 安装 Codex CLI 或设置 CODEX_PET_CLI，然后重新 codex-enable |
+| 提示版本/结构不匹配 | 用 npm ci --ignore-scripts --legacy-peer-deps 恢复锁定版本，不要手工修改校验值 |
 
 ## 开发与验证
 
@@ -177,13 +206,16 @@ python3 manage.py uninstall
 
 ```bash
 python3 -m unittest discover -p 'test_*.py' -v
+node --test test-codex-client.mjs
 ```
 
 测试覆盖多会话结束、迟到事件、工具突发去重、离线重试、Hooks 合并与卸载保留其他配置。跨平台单元测试不等同于桌面动画与真实 Hooks 的实机验收。
+
+`codex_support.py` 只接受 SHA-256 匹配的原始 `dsh-pet@0.3.7/lib/standalone.js`，生成同级 `codex-standalone.js` 和独立的 `runtime/codex-helper`；不覆盖原始入口和桌面文件。适配器补充独立模式缺失的 LLM 后端与额度处理。上游版本变更必须重新验证，不能直接替换包版本或绕过校验。
 
 ## 来源与边界
 
 - 桌宠原项目：[PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet)，按其 MIT 许可及上游说明使用。动画通过 npm 原包安装，本仓库不重新分发人物素材。
 - Codex Hooks：[官方说明](https://learn.chatgpt.com/docs/hooks)。
 - 本仓库桥接代码使用 MIT 许可。不是 OpenAI 或 DeepSeek 官方项目。
-- 当前只做 Codex → 桌宠的状态联动，不支持从桌宠向 Codex 发消息；独立模式的 AI 聊天、余额与 DSH 会话能力未接入。
+- 支持 Codex → 桌宠状态联动、Codex 账号额度和独立文字聊天；不支持通过桌宠继续某个既有工作聊天。DeepSeek API 余额与 DSH 专有会话能力未接入。

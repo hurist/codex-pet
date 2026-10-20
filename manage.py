@@ -97,6 +97,11 @@ def install(args):
             'balanceEnabled': False, 'whisperEnabled': False, 'workStatusEnabled': False,
             'fixedEnabled': False, 'display': 'desktop',
             'position': {'corner': 'top-right', 'marginX': 24, 'marginY': 100}}]})
+    import codex_support
+    cli = codex_support.find_cli()
+    codex_support.prepare(PROJECT / 'node_modules/dsh-pet')
+    codex_support.configure_home(LOCAL / 'dsh-home')
+    write_json(LOCAL / 'config.json', dict(config(), codex_enabled=True, codex_cli=cli))
     install_hooks(home)
 
 
@@ -111,7 +116,39 @@ def runtime():
         raise RuntimeError('缺少桌宠依赖，请先运行 python3 manage.py install。')
     env = dict(os.environ, DSH_HOME=str(LOCAL / 'dsh-home'))
     env.update(deployed.get('autostart_environment', {}))
+    if deployed.get('codex_enabled'):
+        import codex_support
+        entry = codex_support.prepare(package)
+        env['CODEX_PET_CLI'] = deployed['codex_cli']
     return node, entry, env
+
+
+def save_autostart(staged, port):
+    import autostart
+    import plistlib
+    definition = plistlib.loads(autostart.locations()[0].read_bytes())
+    write_json(LOCAL / 'config.json', dict(config(), port=port, autostart_runtime=str(staged),
+               autostart_node=definition['ProgramArguments'][0],
+               autostart_environment=definition['EnvironmentVariables']))
+
+
+def enable_codex():
+    import codex_support
+    cli = codex_support.find_cli()
+    node, entry, env = runtime()
+    package = entry.parent.parent
+    home = Path(env['DSH_HOME'])
+    codex_support.prepare(package)
+    codex_support.configure_home(home)
+    write_json(LOCAL / 'config.json', dict(config(), codex_enabled=True, codex_cli=cli))
+    if sys.platform == 'darwin':
+        import autostart
+        if autostart.locations()[0].exists():
+            staged = autostart.enable(Path(node), package.parent.parent, home, config()['port'], cli)
+            save_autostart(staged, config()['port'])
+            return
+    stop()
+    start(argparse.Namespace(foreground=False))
 
 
 def start(args):
@@ -197,6 +234,7 @@ def main():
     auto.add_argument('--port', type=int, help='默认使用当前部署端口')
     for action in ['stop', 'check', 'demo', 'uninstall']:
         sub.add_parser(action)
+    sub.add_parser('codex-enable', help='为已部署桌宠启用 Codex 额度和独立聊天')
     args = parser.parse_args()
     if args.action == 'install':
         if not 1024 <= args.port <= 65535:
@@ -210,6 +248,8 @@ def main():
         check()
     elif args.action == 'demo':
         demo()
+    elif args.action == 'codex-enable':
+        enable_codex()
     elif args.action == 'autostart':
         if sys.platform != 'darwin':
             raise RuntimeError('当前登录自启命令仅支持 macOS。')
@@ -221,12 +261,9 @@ def main():
             node = shutil.which('node')
             if not node:
                 raise RuntimeError('找不到 node，请先安装 Node.js。')
-            staged = autostart.enable(Path(node).resolve(), args.runtime_dir.resolve(), args.dsh_home.resolve(), port)
-            import plistlib
-            definition = plistlib.loads(autostart.locations()[0].read_bytes())
-            write_json(LOCAL / 'config.json', dict(config(), port=port, autostart_runtime=str(staged),
-                       autostart_node=definition['ProgramArguments'][0],
-                       autostart_environment=definition['EnvironmentVariables']))
+            staged = autostart.enable(Path(node).resolve(), args.runtime_dir.resolve(), args.dsh_home.resolve(), port,
+                                     config().get('codex_cli') if config().get('codex_enabled') else None)
+            save_autostart(staged, port)
         elif args.operation == 'disable':
             autostart.disable()
         else:
