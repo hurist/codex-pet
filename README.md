@@ -125,6 +125,17 @@ python3 manage.py codex-enable # 为旧安装启用额度和聊天
 
 默认不自动设置开机启动。需要时可按下一节启用。关闭桌宠后，Hooks 的短超时失败不会替你批准或拒绝操作。
 
+## macOS 一键启动和退出
+
+执行 `python3 manage.py codex-enable` 升级已有登录自启安装；新电脑完成下面的 `autostart enable` 后，会自动安装 `~/Applications/Codex 桌宠.app`。
+
+- **启动**：Spotlight 搜索「Codex 桌宠」，或在 Finder 的个人「应用程序」文件夹双击；也可将这个 App 拖到 Dock 固定。
+- **退出**：右键桌宠 →「退出桌宠」。会关闭桌宠服务和聊天连接，保存的配置与聊天记录保留。
+- 重复点击 App 不会再开一份；退出后可再次点 App 启动。退出不取消登录自启，下次登录仍会自动出现。
+- 关闭登录自启后 App 仍可手动启动。它使用 Application Support 中的运行副本，无需打开终端或保留原仓库路径；仍需保留已安装的 Node、Electron、Codex CLI。
+
+启动失败会弹提示，详情见 `~/Library/Application Support/CodexPet/launcher.log`，运行日志见同目录 `pet.log`。卸载快捷入口只需删除 `~/Applications/Codex 桌宠.app`；取消自动启动仍使用 `autostart disable`。
+
 ## macOS 登录自动启动
 
 安装、验证桌宠后执行一次：

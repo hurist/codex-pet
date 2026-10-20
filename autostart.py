@@ -163,13 +163,25 @@ def enable(node, runtime_dir, source_home, port, codex_cli=None):
     plist.parent.mkdir(parents=True, exist_ok=True)
     plist.write_bytes(plistlib.dumps(definition(node, support, port, electron, codex_cli)))
     plist.chmod(0o644)
+    import macos_app
+    app = macos_app.install(support, plistlib.loads(plist.read_bytes()))
     ctl('enable', target)
-    ctl('bootstrap', domain, str(plist))
+    # launchd can briefly retain a just-booted-out registration (error 5).
+    # Retry the same job only; do not kill or replace any other service.
+    for attempt in range(4):
+        try:
+            ctl('bootstrap', domain, str(plist))
+            break
+        except subprocess.CalledProcessError as error:
+            if error.returncode != 5 or attempt == 3:
+                raise
+            time.sleep(0.5)
     for _ in range(40):
         try:
             live = service(port)
             if Path(live.get('plugin', {}).get('root', '')).resolve() == staged_package.resolve():
                 print('已启用登录自启，并已由 launchd 启动桌宠。')
+                print(f'快捷启动应用：{app}')
                 return staged_package
         except OSError:
             pass

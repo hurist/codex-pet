@@ -84,6 +84,12 @@ def prepare(package):
                         'name: "dsh-pet-standalone",\n\t\t\tcodexPet: true,\n\t\t\tplugin:')
     text = replace_once(text, '余额 / 碎碎念 / 对话 / 系统通知（依赖 DSH 的凭证、模型与会话）',
                         '系统通知；额度和主动聊天已接入 Codex 登录账号')
+    text = replace_once(text, '\t\tif (rest === "chat") {', '''		if (rest === "quit" && method === "POST") {
+			// Finish the bridge reply before disposing its Electron caller.
+			setTimeout(() => process.emit("SIGTERM"), 100);
+			return { kind: "json", status: 200, obj: { ok: true } };
+		}
+		if (rest === "chat") {''')
     target = package / 'lib/codex-standalone.js'
     target.write_text(text, encoding='utf-8')
     for name in ['codex-client.mjs', 'codex-adapter.mjs']:
@@ -94,5 +100,23 @@ def prepare(package):
     sprite = helper / 'sprite.js'
     ui = sprite.read_text(encoding='utf-8')
     ui = replace_once(ui, "label: '查看余额'", "label: 'Codex 额度'")
+    ui = replace_once(ui, "{ label: '重载配置', action: 'reload' },",
+                      "{ label: '重载配置', action: 'reload' },\n      { label: '退出桌宠', action: 'quit-pet' },")
+    ui = replace_once(ui, "    if (leaf.action === 'reload') {", """    if (leaf.action === 'quit-pet') {
+      fetch(BASE + '/quit', { method: 'POST' }).catch((error) => {
+        console.warn('[codex-pet] 退出请求失败', error);
+      });
+      return;
+    }
+    if (leaf.action === 'reload') {""")
     sprite.write_text(ui, encoding='utf-8')
+    shared = helper / 'shared-core.js'
+    ui = shared.read_text(encoding='utf-8')
+    ui = replace_once(ui, '\t\t\titem.className = "dsh-pet-menu-item";',
+                      '\t\t\titem.className = "dsh-pet-menu-item";\n'
+                      '\t\t\tif (node.action === "quit-pet") {\n'
+                      '\t\t\t\titem.setAttribute("role", "button");\n'
+                      '\t\t\t\titem.setAttribute("aria-label", node.label);\n'
+                      '\t\t\t}')
+    shared.write_text(ui, encoding='utf-8')
     return target
