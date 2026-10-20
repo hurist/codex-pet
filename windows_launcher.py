@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import socket
 import sys
 import time
 import urllib.error
@@ -13,12 +14,23 @@ import urllib.request
 def health(config):
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        with opener.open(f'http://127.0.0.1:{config["port"]}/health', timeout=2) as response:
+        with opener.open(f'http://127.0.0.1:{config["port"]}/health', timeout=5) as response:
             status = json.load(response)
     except urllib.error.URLError as error:
         # Only a refused connection means "not running". A slow/foreign service
         # must never cause a second pet to start on an automatically shifted port.
         if isinstance(error.reason, ConnectionRefusedError):
+            return False
+        if os.name == 'nt' and isinstance(error.reason, TimeoutError):
+            # Windows can time out before reporting a refused loopback connect.
+            # Prove absence with an exclusive bind; an unresponsive listener
+            # still owns the port and must never trigger a duplicate instance.
+            with socket.socket() as probe:
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+                try:
+                    probe.bind(('127.0.0.1', int(config['port'])))
+                except OSError:
+                    raise error
             return False
         raise
     if status.get('name') != 'dsh-pet-standalone' or (
