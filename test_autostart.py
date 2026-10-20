@@ -28,7 +28,7 @@ class LoginAgentTests(unittest.TestCase):
     def test_agent_uses_absolute_arguments_without_shell_and_can_stay_stopped(self):
         definition = autostart.definition(Path('/node with spaces/node'), Path('/app support/CodexPet'), 31870)
         parsed = plistlib.loads(plistlib.dumps(definition))
-        self.assertEqual(parsed['ProgramArguments'][0], '/node with spaces/node')
+        self.assertEqual(parsed['ProgramArguments'][0], str(Path('/node with spaces/node')))
         self.assertTrue(parsed['RunAtLoad'])
         self.assertFalse(parsed['KeepAlive'])
         self.assertEqual(parsed['LimitLoadToSessionType'], 'Aqua')

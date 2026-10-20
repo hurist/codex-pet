@@ -24,10 +24,59 @@ def shortcuts(support, pythonw, operation='install', autostart=True, folders=Non
     script = r'''
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+$ProgressPreference = 'SilentlyContinue'
 $data = ConvertFrom-Json $env:CODEX_PET_SHORTCUTS
-$shell = New-Object -ComObject WScript.Shell
-$programs = $shell.SpecialFolders.Item('Programs')
-$startup = $shell.SpecialFolders.Item('Startup')
+# WScript.Shell.Save can round-trip filenames through the system ANSI codepage.
+# IShellLinkW + IPersistFile preserves Chinese usernames on English Windows too.
+Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+[ComImport, Guid("00021401-0000-0000-C000-000000000046")]
+class PetShellLink {}
+[ComImport, Guid("000214F9-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IPetShellLinkW {
+ void GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder s, int n, IntPtr data, uint flags);
+ void GetIDList(out IntPtr id); void SetIDList(IntPtr id);
+ void GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder s, int n);
+ void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string s);
+ void GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder s, int n);
+ void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string s);
+ void GetArguments([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder s, int n);
+ void SetArguments([MarshalAs(UnmanagedType.LPWStr)] string s);
+ void GetHotkey(out short key); void SetHotkey(short key);
+ void GetShowCmd(out int cmd); void SetShowCmd(int cmd);
+ void GetIconLocation([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder s, int n, out int index);
+ void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string s, int index);
+ void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string s, uint reserved);
+ void Resolve(IntPtr window, uint flags);
+ void SetPath([MarshalAs(UnmanagedType.LPWStr)] string s);
+}
+public static class PetShortcut {
+ public static string[] Read(string path) {
+  object obj = new PetShellLink();
+  try {
+   ((IPersistFile)obj).Load(path, 0);
+   var link = (IPetShellLinkW)obj;
+   var description = new StringBuilder(32768); var arguments = new StringBuilder(32768);
+   link.GetDescription(description, description.Capacity); link.GetArguments(arguments, arguments.Capacity);
+   return new string[] {description.ToString(), arguments.ToString()};
+  } finally { Marshal.FinalReleaseComObject(obj); }
+ }
+ public static void Write(string path, string target, string arguments, string cwd, string icon, string description) {
+  object obj = new PetShellLink();
+  try {
+   var link = (IPetShellLinkW)obj;
+   link.SetPath(target); link.SetArguments(arguments); link.SetWorkingDirectory(cwd);
+   link.SetDescription(description); link.SetIconLocation(icon, 0); link.SetShowCmd(1);
+   ((IPersistFile)obj).Save(path, true);
+  } finally { Marshal.FinalReleaseComObject(obj); }
+ }
+}
+'@
+$programs = [Environment]::GetFolderPath('Programs')
+$startup = [Environment]::GetFolderPath('Startup')
 if ($null -ne $data.folders) { $programs = $data.folders.programs; $startup = $data.folders.startup }
 $menu = Join-Path $programs 'Codex Pet'
 $launcher = Join-Path $data.support 'windows_launcher.py'
@@ -41,8 +90,8 @@ $items = @(
 # Check every collision before writing or deleting any shortcut.
 foreach ($item in $items) {
   if (Test-Path -LiteralPath $item.path) {
-    $old = $shell.CreateShortcut($item.path)
-    if ($old.Description -ne $marker -or $old.Arguments -ne $item.args) {
+    $old = [PetShortcut]::Read($item.path)
+    if ($old[0] -ne $marker -or $old[1] -ne $item.args) {
       throw ('已有同名快捷方式，未覆盖：' + $item.path)
     }
   }
@@ -55,13 +104,8 @@ foreach ($item in $items) {
   }
   if ($data.operation -eq 'disable') { continue }
   [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($item.path)) | Out-Null
-  $link = $shell.CreateShortcut($item.path)
-  $link.TargetPath = $data.pythonw
-  $link.Arguments = $item.args
-  $link.WorkingDirectory = $data.support
-  $link.Description = $marker
-  $link.IconLocation = (Join-Path $data.support 'dsh-home\electron\electron.exe') + ',0'
-  $link.Save()
+  [PetShortcut]::Write($item.path, $data.pythonw, $item.args, $data.support,
+      (Join-Path $data.support 'dsh-home\electron\electron.exe'), $marker)
 }
 @{start=$items[0].path; stop=$items[1].path; startup=$items[2].path;
   enabled=(Test-Path -LiteralPath $items[2].path)} | ConvertTo-Json -Compress
