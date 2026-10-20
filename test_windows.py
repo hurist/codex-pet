@@ -61,6 +61,20 @@ class WindowsCompatibilityTests(unittest.TestCase):
                 launcher.start(config)
             self.assertEqual(spawn.call_args.kwargs['creationflags'], 0x08000200)
 
+    def test_windows_timeout_requires_exclusive_port_absence_proof(self):
+        opener = unittest.mock.MagicMock()
+        opener.open.side_effect = urllib.error.URLError(TimeoutError('slow'))
+        with patch.object(launcher.urllib.request, 'build_opener', return_value=opener), \
+             patch.object(launcher.os, 'name', 'nt'), \
+             patch.object(launcher.socket, 'SO_EXCLUSIVEADDRUSE', 4, create=True), \
+             patch.object(launcher.socket, 'socket') as socket:
+            self.assertFalse(launcher.health({'port': 31870}))
+            probe = socket.return_value.__enter__.return_value
+            probe.bind.assert_called_with(('127.0.0.1', 31870))
+            probe.bind.side_effect = OSError('occupied')
+            with self.assertRaises(urllib.error.URLError):
+                launcher.health({'port': 31870})
+
     @unittest.skipUnless(os.name == 'nt', 'Exercises real Windows COM shortcuts and byte locks')
     def test_native_shortcuts_and_process_lifecycle(self):
         with tempfile.TemporaryDirectory(prefix='pet 中文 空格 ') as temp:
