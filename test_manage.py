@@ -8,6 +8,22 @@ import manage
 
 
 class HookInstallTests(unittest.TestCase):
+    def test_manual_runtime_reuses_login_deployment_without_shell_path(self):
+        with tempfile.TemporaryDirectory() as temp:
+            package = Path(temp) / 'dsh-pet'
+            (package / 'lib').mkdir(parents=True)
+            (package / 'lib/standalone.js').touch()
+            saved = {'autostart_node': '/saved/node', 'autostart_runtime': str(package),
+                     'autostart_environment': {'DSH_HOME': '/saved/state',
+                                              'DSH_PET_ELECTRON_PATH': '/saved/Electron'}}
+            with patch.object(manage, 'config', return_value=saved), \
+                 patch.object(manage.shutil, 'which', return_value=None):
+                node, entry, env = manage.runtime()
+            self.assertEqual(node, '/saved/node')
+            self.assertEqual(entry, package / 'lib/standalone.js')
+            self.assertEqual(env['DSH_HOME'], '/saved/state')
+            self.assertEqual(env['DSH_PET_ELECTRON_PATH'], '/saved/Electron')
+
     def test_install_is_repeatable_and_preserves_other_hooks(self):
         with tempfile.TemporaryDirectory(prefix='codex pet ') as temp:
             root = Path(temp)

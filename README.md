@@ -94,7 +94,38 @@ python3 manage.py check       # 检查配置及服务
 python3 manage.py demo        # 演示模拟事件
 ```
 
-不设置开机启动；重启电脑后手动运行 start。关闭桌宠后，Hooks 的短超时失败不会替你批准或拒绝操作。
+默认不自动设置开机启动。需要时可按下一节启用。关闭桌宠后，Hooks 的短超时失败不会替你批准或拒绝操作。
+
+## macOS 登录自动启动
+
+安装、验证桌宠后执行一次：
+
+```bash
+python3 manage.py autostart enable
+python3 manage.py autostart status
+```
+
+这会在当前用户的 `~/Library/LaunchAgents/com.hurist.codex-pet.plist` 注册登录启动项，立即接管当前桌宠；以后登录 Mac 后自动运行，无需打开终端或 Codex。属于用户级 LaunchAgent，无需 sudo。没有登录桌面时不运行。
+
+启动项直接使用启用时找到的 Node 绝对路径，兼容 nvm 安装。依赖和桌宠配置会复制到 `~/Library/Application Support/CodexPet/`，避免登录后的后台进程访问“文稿”目录时受到系统隐私权限限制；不复制聊天内容、密钥或 Codex 配置。日志在该目录的 `pet.log`。
+
+不会启用强制保活：手动 stop 后不会立即重新弹出，仍可用 start 手动运行，下一次登录再自动启动。启用前请先完成首次 Electron 下载。macOS 提示“后台项目”时，可在系统设置中查看或管理。
+
+关闭登录自启（同时退出该启动项运行的桌宠）：
+
+```bash
+python3 manage.py autostart disable
+```
+
+更新项目、修改大小/位置或更换 Node 安装路径后，重新执行 `autostart enable` 更新部署副本。修改登录自启正在使用的配置，也可直接编辑 `~/Library/Application Support/CodexPet/dsh-home/dsh-pet/main-config.jsonc` 后重启该启动项。
+
+如果以前通过独立的 `dsh-pet-runtime` 目录部署，希望保留已经信任的旧桥接 Hooks，可以指定旧运行目录、原 DSH_HOME 和原端口：
+
+```bash
+python3 manage.py autostart enable --runtime-dir /path/to/dsh-pet-runtime --dsh-home /path/to/dsh-pet-runtime/state --port 31870
+```
+
+该命令只接管桌宠进程，不修改已经安装的 Hooks。登录自启命令当前仅支持 macOS；Windows/Linux 仍使用手动 start。
 
 ## 路径、端口和大小
 
@@ -126,7 +157,7 @@ python3 manage.py start
 python3 manage.py uninstall
 ```
 
-该命令关闭本项目实例、删除带 Codex Pet 标记的 Hooks，保留其他 Hooks 与 `.local` 本地数据。之后可以自行删除仓库目录。
+该命令关闭本项目实例、删除带 Codex Pet 标记的 Hooks；macOS 上同时移除登录自启。其他 Hooks、`.local` 本地数据和应用支持目录中的桌宠副本保留。之后可以自行删除仓库目录及不再需要的副本。
 
 ## 故障排查
 

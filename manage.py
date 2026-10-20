@@ -38,9 +38,15 @@ def request(route, method='GET', timeout=1):
 
 def own_service(status):
     # Never stop an unrelated program or another dsh-pet installation on this port.
+    roots = {(PROJECT / 'node_modules/dsh-pet').resolve()}
+    try:
+        staged = config().get('autostart_runtime')
+        if staged:
+            roots.add(Path(staged).resolve())
+    except FileNotFoundError:
+        pass
     return (status.get('name') == 'dsh-pet-standalone' and
-            Path(status.get('plugin', {}).get('root', '')).resolve() ==
-            (PROJECT / 'node_modules/dsh-pet').resolve())
+            Path(status.get('plugin', {}).get('root', '')).resolve() in roots)
 
 
 def remove_ours(data):
@@ -82,7 +88,8 @@ def install(args):
             raise RuntimeError('找不到 npm，请安装 Node.js >=22.12.0 并重新打开终端。')
         subprocess.run([npm, 'ci', '--ignore-scripts', '--legacy-peer-deps', '--no-audit', '--no-fund'], cwd=PROJECT, check=True)
     # All mutable data is isolated from the user's DSH profile.
-    write_json(LOCAL / 'config.json', {'port': args.port, 'codex_home': str(home)})
+    previous = config() if (LOCAL / 'config.json').exists() else {}
+    write_json(LOCAL / 'config.json', dict(previous, port=args.port, codex_home=str(home)))
     pet_config = LOCAL / 'dsh-home/dsh-pet/main-config.jsonc'
     if not pet_config.exists():
         write_json(pet_config, {'notificationsEnabled': False, 'pets': [{
@@ -94,13 +101,16 @@ def install(args):
 
 
 def runtime():
-    node = shutil.which('node')
+    deployed = config()
+    node = deployed.get('autostart_node') or shutil.which('node')
     if not node:
         raise RuntimeError('找不到 node，请安装 Node.js >=22.12.0。')
-    entry = PROJECT / 'node_modules/dsh-pet/lib/standalone.js'
+    package = Path(deployed.get('autostart_runtime', PROJECT / 'node_modules/dsh-pet'))
+    entry = package / 'lib/standalone.js'
     if not entry.exists():
         raise RuntimeError('缺少桌宠依赖，请先运行 python3 manage.py install。')
     env = dict(os.environ, DSH_HOME=str(LOCAL / 'dsh-home'))
+    env.update(deployed.get('autostart_environment', {}))
     return node, entry, env
 
 
@@ -180,6 +190,11 @@ def main():
     install_parser.add_argument('--skip-runtime', action='store_true', help='仅配置桥接，跳过 npm ci')
     start_parser = sub.add_parser('start')
     start_parser.add_argument('--foreground', action='store_true')
+    auto = sub.add_parser('autostart', help='macOS 登录自动启动')
+    auto.add_argument('operation', choices=['enable', 'disable', 'status'])
+    auto.add_argument('--runtime-dir', type=Path, default=PROJECT)
+    auto.add_argument('--dsh-home', type=Path, default=LOCAL / 'dsh-home')
+    auto.add_argument('--port', type=int, help='默认使用当前部署端口')
     for action in ['stop', 'check', 'demo', 'uninstall']:
         sub.add_parser(action)
     args = parser.parse_args()
@@ -195,7 +210,31 @@ def main():
         check()
     elif args.action == 'demo':
         demo()
+    elif args.action == 'autostart':
+        if sys.platform != 'darwin':
+            raise RuntimeError('当前登录自启命令仅支持 macOS。')
+        import autostart
+        if args.operation == 'enable':
+            port = args.port if args.port is not None else config()['port']
+            if not 1024 <= port <= 65535:
+                raise RuntimeError('port 必须在 1024..65535 范围内')
+            node = shutil.which('node')
+            if not node:
+                raise RuntimeError('找不到 node，请先安装 Node.js。')
+            staged = autostart.enable(Path(node).resolve(), args.runtime_dir.resolve(), args.dsh_home.resolve(), port)
+            import plistlib
+            definition = plistlib.loads(autostart.locations()[0].read_bytes())
+            write_json(LOCAL / 'config.json', dict(config(), port=port, autostart_runtime=str(staged),
+                       autostart_node=definition['ProgramArguments'][0],
+                       autostart_environment=definition['EnvironmentVariables']))
+        elif args.operation == 'disable':
+            autostart.disable()
+        else:
+            autostart.status()
     elif args.action == 'uninstall':
+        if sys.platform == 'darwin':
+            import autostart
+            autostart.disable()
         stop()
         target = Path(config()['codex_home']) / 'hooks.json'
         if target.exists():
