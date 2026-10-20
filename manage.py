@@ -12,6 +12,7 @@ import time
 import urllib.request
 
 import bridge
+from platform_tools import npm_command
 
 PROJECT = Path(__file__).resolve().parent
 LOCAL = PROJECT / '.local'
@@ -83,10 +84,7 @@ def install_hooks(home):
 def install(args):
     home = Path(args.codex_home).expanduser().resolve()
     if not args.skip_runtime:
-        npm = shutil.which('npm')
-        if not npm:
-            raise RuntimeError('找不到 npm，请安装 Node.js >=22.12.0 并重新打开终端。')
-        subprocess.run([npm, 'ci', '--ignore-scripts', '--legacy-peer-deps', '--no-audit', '--no-fund'], cwd=PROJECT, check=True)
+        subprocess.run(npm_command() + ['ci', '--ignore-scripts', '--legacy-peer-deps', '--no-audit', '--no-fund'], cwd=PROJECT, check=True)
     # All mutable data is isolated from the user's DSH profile.
     previous = config() if (LOCAL / 'config.json').exists() else {}
     write_json(LOCAL / 'config.json', dict(previous, port=args.port, codex_home=str(home)))
@@ -103,6 +101,8 @@ def install(args):
     codex_support.configure_home(LOCAL / 'dsh-home')
     write_json(LOCAL / 'config.json', dict(config(), codex_enabled=True, codex_cli=cli))
     install_hooks(home)
+    if sys.platform == 'win32':
+        desktop_install()
 
 
 def runtime():
@@ -124,6 +124,12 @@ def runtime():
 
 
 def save_autostart(staged, port):
+    if sys.platform == 'win32':
+        import windows_autostart
+        saved = windows_autostart.read_config()
+        write_json(LOCAL / 'config.json', dict(config(), port=port, autostart_runtime=str(staged),
+                   autostart_node=saved['node'], autostart_environment=saved['environment']))
+        return
     import autostart
     import plistlib
     definition = plistlib.loads(autostart.locations()[0].read_bytes())
@@ -141,6 +147,9 @@ def enable_codex():
     codex_support.prepare(package)
     codex_support.configure_home(home)
     write_json(LOCAL / 'config.json', dict(config(), codex_enabled=True, codex_cli=cli))
+    if sys.platform == 'win32':
+        desktop_install()
+        return
     if sys.platform == 'darwin':
         import autostart
         if autostart.locations()[0].exists():
@@ -149,6 +158,22 @@ def enable_codex():
             return
     stop()
     start(argparse.Namespace(foreground=False))
+
+
+def desktop_install(login=None, runtime_dir=None, source_home=None, port=None):
+    if sys.platform != 'win32':
+        raise RuntimeError('desktop-install 用于 Windows；macOS 请使用 autostart enable 安装 App。')
+    import windows_autostart
+    node, entry, env = runtime()
+    support = windows_autostart.locations()[1]
+    if login is None:
+        login = False
+        if windows_autostart.locations()[0].exists():
+            login = windows_autostart.shortcuts(support, windows_autostart.read_config()['pythonw'], 'status')['enabled']
+    staged = windows_autostart.enable(Path(node), runtime_dir or entry.parent.parent.parent.parent,
+                                      source_home or Path(env['DSH_HOME']), port or config()['port'],
+                                      config().get('codex_cli'), login=login)
+    save_autostart(staged, port or config()['port'])
 
 
 def start(args):
@@ -162,6 +187,16 @@ def start(args):
         print('本项目桌宠已运行。')
         return
     node, entry, env = runtime()
+    if sys.platform == 'win32' and not args.foreground:
+        import windows_autostart
+        import windows_launcher
+        if windows_autostart.locations()[0].exists():
+            # Share the same process lock with Start-menu and login launches.
+            with windows_launcher.launch_lock(windows_autostart.locations()[1]) as acquired:
+                if acquired:
+                    windows_launcher.start(windows_autostart.read_config())
+            print('Windows 桌宠已启动。')
+            return
     command = [node, str(entry), '--port', str(config()['port'])]
     if args.foreground:
         subprocess.run(command, cwd=PROJECT, env=env, check=True)
@@ -227,7 +262,7 @@ def main():
     install_parser.add_argument('--skip-runtime', action='store_true', help='仅配置桥接，跳过 npm ci')
     start_parser = sub.add_parser('start')
     start_parser.add_argument('--foreground', action='store_true')
-    auto = sub.add_parser('autostart', help='macOS 登录自动启动')
+    auto = sub.add_parser('autostart', help='macOS / Windows 登录自动启动')
     auto.add_argument('operation', choices=['enable', 'disable', 'status'])
     auto.add_argument('--runtime-dir', type=Path, default=PROJECT)
     auto.add_argument('--dsh-home', type=Path, default=LOCAL / 'dsh-home')
@@ -235,6 +270,7 @@ def main():
     for action in ['stop', 'check', 'demo', 'uninstall']:
         sub.add_parser(action)
     sub.add_parser('codex-enable', help='为已部署桌宠启用 Codex 额度和独立聊天')
+    sub.add_parser('desktop-install', help='Windows：安装或更新开始菜单快捷入口，不强制开启登录自启')
     args = parser.parse_args()
     if args.action == 'install':
         if not 1024 <= args.port <= 65535:
@@ -250,9 +286,32 @@ def main():
         demo()
     elif args.action == 'codex-enable':
         enable_codex()
+    elif args.action == 'desktop-install':
+        desktop_install()
     elif args.action == 'autostart':
+        if sys.platform == 'win32':
+            import windows_autostart
+            if args.operation == 'enable':
+                port = args.port if args.port is not None else config()['port']
+                if not 1024 <= port <= 65535:
+                    raise RuntimeError('port 必须在 1024..65535 范围内')
+                # Default to the active deployed home so customized personas
+                # and positions aren't overwritten by an older source config.
+                saved = config()
+                source_home = args.dsh_home.resolve()
+                runtime_dir = args.runtime_dir.resolve()
+                if source_home == (LOCAL / 'dsh-home').resolve() and saved.get('autostart_environment'):
+                    source_home = Path(saved['autostart_environment']['DSH_HOME'])
+                if runtime_dir == PROJECT and saved.get('autostart_runtime'):
+                    runtime_dir = Path(saved['autostart_runtime']).parent.parent
+                desktop_install(True, runtime_dir, source_home, port)
+            elif args.operation == 'disable':
+                windows_autostart.disable()
+            else:
+                windows_autostart.status()
+            return
         if sys.platform != 'darwin':
-            raise RuntimeError('当前登录自启命令仅支持 macOS。')
+            raise RuntimeError('当前登录自启命令支持 macOS 和 Windows。')
         import autostart
         if args.operation == 'enable':
             port = args.port if args.port is not None else config()['port']
@@ -269,6 +328,9 @@ def main():
         else:
             autostart.status()
     elif args.action == 'uninstall':
+        if sys.platform == 'win32':
+            import windows_autostart
+            windows_autostart.disable()
         if sys.platform == 'darwin':
             import autostart
             autostart.disable()

@@ -12,13 +12,13 @@ import urllib.request
 LABEL = 'com.hurist.codex-pet'
 
 
-def replace_tree(source, target):
+def replace_tree(source, target, symlinks=True):
     """copytree's dirs_exist_ok cannot overwrite existing npm/app symlinks."""
     target.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.codex-pet-stage-', dir=target.parent) as temp:
         fresh = Path(temp) / 'fresh'
         previous = Path(temp) / 'previous'
-        shutil.copytree(source, fresh, symlinks=True)
+        shutil.copytree(source, fresh, symlinks=symlinks)
         if target.exists():
             target.rename(previous)
         try:

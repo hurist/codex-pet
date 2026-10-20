@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import os
 import plistlib
 import subprocess
 import tempfile
@@ -10,6 +11,7 @@ import macos_app
 
 
 class MacAppTests(unittest.TestCase):
+    @unittest.skipIf(os.name == 'nt', 'POSIX shell app entry is macOS-only')
     def test_app_can_launch_paths_with_spaces_and_shell_characters(self):
         with tempfile.TemporaryDirectory(prefix="pet ' $(literal) ") as temp:
             root = Path(temp)

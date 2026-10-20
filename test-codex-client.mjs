@@ -70,6 +70,22 @@ test('API key login cannot accidentally become a paid pet chat provider', async 
   assert.equal(child.killed, true);
 });
 
+test('npm Codex JS entry runs through Node with direct hidden stdio', async () => {
+  const { child } = fakeServer();
+  let invocation;
+  const client = new CodexClient('C:/用户 空格/codex.js', '/chat', (...args) => {
+    invocation = args;
+    return child;
+  });
+  try {
+    await client.quota();
+    assert.equal(invocation[0], process.execPath);
+    assert.deepEqual(invocation[1].slice(0, 2), ['C:/用户 空格/codex.js', 'app-server']);
+    assert.equal(invocation[2].windowsHide, true);
+    assert.equal(invocation[2].shell, undefined);
+  } finally { client.close(); }
+});
+
 test('chat handles fast completion, ignores other threads and requests no environment', async t => {
   const { child, sent } = fakeServer();
   const client = new CodexClient('fake', chatDirectory(t), () => child);

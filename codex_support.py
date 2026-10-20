@@ -5,6 +5,7 @@ import os
 import re
 from pathlib import Path
 import shutil
+from platform_tools import script_entry
 
 ROOT = Path(__file__).resolve().parent
 UPSTREAM_SHA256 = '35d96d10722e2dfd217e1dddcbc39ef3ee64b1ac72ea529d3e5b4c3b7d58c50a'
@@ -32,11 +33,11 @@ def find_cli():
     explicit = os.environ.get('CODEX_PET_CLI')
     if explicit:
         if Path(explicit).is_file():
-            return str(Path(explicit).resolve())
+            return script_entry(explicit, '@openai/codex', 'codex.js')
         raise RuntimeError('CODEX_PET_CLI 指定的文件不存在。')
-    command = shutil.which('codex')
+    command = shutil.which('codex') or shutil.which('codex.cmd')
     if command:
-        return command
+        return script_entry(command, '@openai/codex', 'codex.js')
     for application in ['ChatGPT.app', 'Codex.app']:
         command = Path('/Applications') / application / 'Contents/Resources/codex-cli/bin/codex'
         if command.is_file():

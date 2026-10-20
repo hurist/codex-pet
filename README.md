@@ -27,7 +27,7 @@
 - [Python](https://www.python.org/downloads/) **>=3.9**，以及 Git。
 - 首次部署需要网络：npm 下载 dsh-pet，首次启动还可能下载 Electron。
 
-本次实际验证平台为 **macOS Apple Silicon**；提供 Windows/Linux 兼容代码，但这两个系统的桌宠窗口和 Codex 联动尚未实机验收。Linux 需要图形桌面。无需提供 DeepSeek API Key。
+支持 **macOS 和原生 Windows 10/11** 的安装、快捷启动、退出、登录自启，以及 Codex Hooks、额度与固定桌宠聊天。macOS Apple Silicon 已做桌面实测；Windows 增加了原生快捷方式、文件锁和进程启停的 CI 检查，透明动画、缩放和真实 Codex 账号联动仍需要在你的 Windows 电脑验收。Linux 目前仅提供手动启动，需要图形桌面。无需 DeepSeek API Key。
 
 ## Codex 额度与独立聊天
 
@@ -68,7 +68,7 @@ python3 --version
 python3 manage.py install
 ```
 
-Windows 如果没有 `python3` 命令，可把以下所有 `python3` 替换成 `py -3`。
+**Windows 用户请优先使用下面的 Windows 专节**。以下通用命令中的 `python3` 在 Windows 可替换成 `py -3`。
 
 安装器使用固定版本 `dsh-pet@0.3.7` 和 package-lock，在本仓库安装依赖，不需要全局安装 npm 包。它会合并当前电脑 `~/.codex/hooks.json` 中的 9 个 **Codex Pet** Hooks，保留其他 Hooks 和 `config.toml` 中原来的通知配置。原 Hooks 文件备份在 `.local/backups/`。
 
@@ -125,6 +125,48 @@ python3 manage.py codex-enable # 为旧安装启用额度和聊天
 
 默认不自动设置开机启动。需要时可按下一节启用。关闭桌宠后，Hooks 的短超时失败不会替你批准或拒绝操作。
 
+## Windows 安装、快捷启动与登录自启
+
+请在 **Windows 原生 PowerShell/终端** 操作，安装 Windows 版 Node.js、Python 和 Git；不在 WSL 中安装这个桌面启动器。Python 推荐 python.org 完整安装版（包含 `pythonw.exe` 和 `py` 启动器）。Node.js 至少 22.12。Codex 桌面版也应使用 Windows 本地环境和同一账号/`CODEX_HOME`；WSL 中的登录和聊天目录不会自动与原生 Windows 共用。
+
+首次安装：
+
+```powershell
+git clone https://github.com/hurist/codex-pet.git
+cd codex-pet
+node --version
+py -3 --version
+npm.cmd install -g @openai/codex
+codex.cmd login
+py -3 manage.py install
+```
+
+如果本来就有可用的原生 `codex.exe` 并已登录，可以跳过全局 CLI 安装和 login。`install` 会安装 npm 依赖、配置 Hooks、下载 Windows Electron、生成开始菜单快捷方式并启动桌宠；首次下载可能需要等待。它**不会默认启用登录自启**。在 Codex 设置 → Hooks 中重新加载并信任本机生成的 9 项 Codex Pet，随后执行 `py -3 manage.py demo` 检查动画状态。
+
+日常操作：
+
+- **启动**：Windows 开始菜单搜索「Codex 桌宠」，入口在「Codex Pet」文件夹内。双击即启动，不打开终端；重复点击不会多开。
+- **退出**：右键宠物 →「退出桌宠」，或从开始菜单选择「退出 Codex 桌宠」。两者都会关闭服务并保留记录。
+- **登录自启**：执行 `py -3 manage.py autostart enable`。使用当前用户 Startup 文件夹快捷方式，不需要管理员或计划任务；登录桌面后启动。退出后不会强制重启。
+- **状态**：`py -3 manage.py autostart status`。这里只确认 Startup 快捷方式和当前服务；如果在任务管理器中禁用了该启动项，还需在那里恢复启用。
+- **关闭自启**：`py -3 manage.py autostart disable`，同时退出当前桌宠；开始菜单入口仍可手动使用。
+- **更新快捷入口/运行副本**：`py -3 manage.py desktop-install`。保留当前自启开关；更新代码后也可用 `py -3 manage.py codex-enable` 刷新。
+
+运行目录为 `%LOCALAPPDATA%\CodexPet`，其中 `pet.log` 是运行日志，`launcher.log` 是快捷启动错误日志；配置为 `dsh-home\dsh-pet\main-config.jsonc`，固定聊天索引为 `dsh-home\codex-chat\thread.json`。开始菜单和登录自启共用这一份运行目录及记录。首次切换到部署副本时，会迁移原有桌宠记忆与聊天 ID；后续升级不会覆盖已有记录。不要复制其他电脑的登录令牌，换电脑仍需在本机登录。
+
+适配器会把 npm 的 `npm.cmd`、`codex.cmd` 解析到相应 JS 入口，由 Node 直接启动，避免隐藏窗口中无法执行 `.cmd` 和空格路径问题。找不到 CLI 时，在当前终端设置 `$env:CODEX_PET_CLI = 'C:\实际路径\codex.exe'`（或官方 npm 包的 `bin\codex.js`），再执行 install/codex-enable。自定义 Electron 请指向完整 Windows Electron 目录里的 `electron.exe`，安装器会复制相邻 DLL 和 resources，不能只拷一个 exe。
+
+更新：
+
+```powershell
+py -3 manage.py stop
+git pull --ff-only
+py -3 manage.py install
+py -3 manage.py check
+```
+
+卸载联动使用 `py -3 manage.py uninstall`：关闭服务、移除登录自启和本项目 Hooks，保留聊天、配置和开始菜单快捷入口。彻底移除前，可再手动删除开始菜单的 Codex Pet 文件夹及 `%LOCALAPPDATA%\CodexPet`。移动仓库后需重新 install 并信任新的 Hooks；更换 Python/Node/Codex 安装路径后需更新快捷入口。
+
 ## macOS 一键启动和退出
 
 执行 `python3 manage.py codex-enable` 升级已有登录自启安装；新电脑完成下面的 `autostart enable` 后，会自动安装 `~/Applications/Codex 桌宠.app`。
@@ -165,7 +207,7 @@ python3 manage.py autostart disable
 python3 manage.py autostart enable --runtime-dir /path/to/dsh-pet-runtime --dsh-home /path/to/dsh-pet-runtime/state --port 31870
 ```
 
-该命令只接管桌宠进程，不修改已经安装的 Hooks。登录自启命令当前仅支持 macOS；Windows/Linux 仍使用手动 start。
+该命令只接管桌宠进程，不修改已经安装的 Hooks。Windows 登录自启和快捷方式见上方 Windows 专节；Linux 仍使用手动 start。
 
 ## 路径、端口和大小
 
@@ -198,7 +240,7 @@ python3 manage.py start
 python3 manage.py uninstall
 ```
 
-该命令关闭本项目实例、删除带 Codex Pet 标记的 Hooks；macOS 上同时移除登录自启。其他 Hooks、`.local` 本地数据和应用支持目录中的桌宠副本保留。之后可以自行删除仓库目录及不再需要的副本。
+该命令关闭本项目实例、删除带 Codex Pet 标记的 Hooks；macOS 和 Windows 上同时移除登录自启。其他 Hooks、`.local` 本地数据和应用支持目录中的桌宠副本保留。之后可以自行删除仓库目录及不再需要的副本。
 
 ## 故障排查
 
@@ -223,6 +265,8 @@ python3 manage.py uninstall
 python3 -m unittest discover -p 'test_*.py' -v
 node --test test-codex-client.mjs
 ```
+
+GitHub Actions 在 Windows、macOS、Linux 上执行这些检查。Windows 专用测试真实创建/移除临时目录中的 `.lnk`，验证字节锁、隐藏 Node 进程启动/重复启动/退出和中文空格路径；另用官方 npm Codex CLI 验证 shim 解析和 `--version`。不使用账号凭证、不调用模型。
 
 测试覆盖多会话结束、迟到事件、工具突发去重、离线重试、Hooks 合并与卸载保留其他配置。跨平台单元测试不等同于桌面动画与真实 Hooks 的实机验收。
 

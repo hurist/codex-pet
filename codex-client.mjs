@@ -26,11 +26,15 @@ export class CodexClient extends EventEmitter {
 
   async initialize() {
     // Codex manages the existing login and token refresh; never read auth.json.
-    const child = this.launch(this.cli, ['app-server', '--listen', 'stdio://',
+    // npm installs a .cmd shim on Windows. The installer resolves it to the
+    // official JS entry so stdio stays direct and paths never enter a shell.
+    const script = this.cli.toLowerCase().endsWith('.js');
+    const child = this.launch(script ? process.execPath : this.cli,
+      [...(script ? [this.cli] : []), 'app-server', '--listen', 'stdio://',
       '-c', 'features.hooks=false', '-c', 'features.plugins=false',
       '-c', 'features.shell_tool=false', '-c', 'features.multi_agent=false',
       '-c', 'web_search="disabled"'], {
-      cwd: this.cwd, env: process.env, stdio: ['pipe', 'pipe', 'pipe'],
+      cwd: this.cwd, env: process.env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
     });
     this.child = child;
     // Diagnostics can contain account metadata: do not forward raw stderr to logs.
