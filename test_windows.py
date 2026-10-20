@@ -45,8 +45,10 @@ class WindowsCompatibilityTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, '其他服务'):
                 launcher.health(config)
             opener.open.side_effect = urllib.error.URLError(TimeoutError('slow'))
-            with self.assertRaises(urllib.error.URLError):
-                launcher.health(config)
+            with patch.object(launcher.socket, 'socket') as probe:
+                probe.return_value.__enter__.return_value.bind.side_effect = OSError('occupied')
+                with self.assertRaises(urllib.error.URLError):
+                    launcher.health(config)
             opener.open.side_effect = urllib.error.URLError(ConnectionRefusedError())
             self.assertFalse(launcher.health(config))
 
